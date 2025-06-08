@@ -1,7 +1,7 @@
 import re
 from .models import ConversationState
 from .database import get_session, save_session
-from .services import check_inventory, send_tour_confirmation_email
+from .services import check_inventory, send_tour_confirmation_email, send_tour_confirmation_sms
 from pydantic import validate_email
 
 def process_message(session_id: str, message: str) -> str:
@@ -12,16 +12,22 @@ def process_message(session_id: str, message: str) -> str:
     # Allow booking at any point if we have enough info
     if "book" in message.lower() and session.state == "COMPLETED":
         unit_id = check_inventory(session.beds)
-        if unit_id and session.email:
+        if unit_id and session.email and session.phone:
+            # Call both email and SMS services
             send_tour_confirmation_email(
                 recipient_email=session.email,
                 name=session.name,
                 unit_id=unit_id,
-                property_address="123 Main St, Anytown, USA"
+                property_address="123 Main St, Boston, MA"
             )
-            return f"Great! I've sent a tour confirmation for unit {unit_id} to {session.email}. See you soon!"
+            send_tour_confirmation_sms(
+                recipient_phone=session.phone,
+                name=session.name,
+                unit_id=unit_id
+            )
+            return f"Great! I've sent a tour confirmation for unit {unit_id} to {session.email} and your phone. See you soon!"
         else:
-            return "Something went wrong. I couldn't find a unit or your email is missing."
+            return "Something went wrong. I couldn't find a unit or your contact details are missing."
 
     response = ""
     current_state = session.state
@@ -36,19 +42,19 @@ def process_message(session_id: str, message: str) -> str:
             validate_email(message.strip())
             session.email = message.strip()
             session.state = "AWAITING_PHONE"
-            response = "Got it. And your phone number?"
+            response = "Got it. And your phone number? (Please include country code, e.g., +15551234567)"
         except ValueError:
             response = "That doesn't look like a valid email. Please try again."
 
     elif current_state == "AWAITING_PHONE":
-        # Simple regex for phone format validation
-        phone_match = re.match(r"^\+?1?\d{9,15}$", message.strip().replace(" ", ""))
+        # Updated regex to better handle international formats, requires '+'
+        phone_match = re.match(r"^\+\d{1,15}$", message.strip().replace(" ", ""))
         if phone_match:
-            session.phone = message.strip()
+            session.phone = message.strip().replace(" ", "")
             session.state = "AWAITING_MOVE_IN_DATE"
             response = "Perfect. When are you looking to move in? (e.g., 'August 1st', '2025-08-01')"
         else:
-            response = "Please provide a valid phone number."
+            response = "Please provide a valid phone number in the format +15551234567."
 
     elif current_state == "AWAITING_MOVE_IN_DATE":
         session.move_in_date = message.strip()

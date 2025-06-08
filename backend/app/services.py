@@ -1,50 +1,64 @@
-import smtplib
 import os
-from email.mime.text import MIMEText
 from dotenv import load_dotenv
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+from twilio.rest import Client
 
+# Load environment variables from .env file
 load_dotenv()
 
 def check_inventory(beds: int) -> str | None:
-    # Stub function to simulate checking unit availability
-    # In a real app, this would query a database
+    """Stub function to simulate checking unit availability."""
     if 1 <= beds <= 3:
         return f"UNIT-{beds}0{beds}"
     return None
 
 def send_tour_confirmation_email(recipient_email: str, name: str, unit_id: str, property_address: str):
-    email_user = os.getenv("EMAIL_USER")
-    email_password = os.getenv("EMAIL_PASSWORD")
-    email_host = os.getenv("EMAIL_HOST")
-    email_port = int(os.getenv("EMAIL_PORT"))
+    """Sends a confirmation email using the SendGrid API."""
+    message = Mail(
+        from_email=os.getenv("VERIFIED_SENDER_EMAIL"), # IMPORTANT: Use an email from a domain you verified on SendGrid
+        to_emails=recipient_email,
+        subject="Your Tour Confirmation",
+        html_content=f"""
+        <p>Hi {name},</p>
+        <p>Your tour is confirmed!</p>
+        <ul>
+            <li><strong>Property:</strong> {property_address}</li>
+            <li><strong>Unit:</strong> {unit_id}</li>
+            <li><strong>Suggested Tour Slot:</strong> Tuesday at 2:00 PM.</li>
+        </ul>
+        <p>Please let us know if you need to reschedule.</p>
+        <p>Thanks,<br>The Homewiz Team</p>
+        """
+    )
+    try:
+        sendgrid_client = SendGridAPIClient(os.getenv("SENDGRID_API_KEY"))
+        response = sendgrid_client.send(message)
+        print(f"Email sent to {recipient_email} via SendGrid, Status Code: {response.status_code}")
+    except Exception as e:
+        print(f"Failed to send email via SendGrid: {e}")
 
-    subject = "Your Tour Confirmation"
-    body = f"""
-    Hi {name},
+def send_tour_confirmation_sms(recipient_phone: str, name: str, unit_id: str):
+    """Sends a confirmation SMS using the Twilio API."""
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+    
+    if not all([account_sid, auth_token, twilio_number]):
+        print("Twilio credentials are not fully configured.")
+        return
 
-    Your tour is confirmed!
-
-    Property: {property_address}
-    Unit: {unit_id}
-    Suggested Tour Slot: Tuesday at 2:00 PM.
-
-    Please let us know if you need to reschedule.
-
-    Thanks,
-    The Homewiz Team
-    """
-
-    msg = MIMEText(body)
-    msg['Subject'] = subject
-    msg['From'] = email_user
-    msg['To'] = recipient_email
+    client = Client(account_sid, auth_token)
 
     try:
-        with smtplib.SMTP(email_host, email_port) as server:
-            server.starttls()
-            server.login(email_user, email_password)
-            server.sendmail(email_user, recipient_email, msg.as_string())
-            print(f"Email sent to {recipient_email}")
+        # Ensure phone number is in E.164 format for Twilio
+        formatted_phone = recipient_phone if recipient_phone.startswith('+') else f'+{recipient_phone}'
+        
+        message = client.messages.create(
+            body=f"Hi {name}, your tour for unit {unit_id} is confirmed! See you Tuesday at 2:00 PM. -Homewiz Team",
+            from_=twilio_number,
+            to=formatted_phone
+        )
+        print(f"SMS sent to {formatted_phone} via Twilio, SID: {message.sid}")
     except Exception as e:
-        # In a real app, log this error properly
-        print(f"Failed to send email: {e}")
+        print(f"Failed to send SMS via Twilio: {e}")
